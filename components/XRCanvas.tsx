@@ -35,12 +35,21 @@ const jointConnections = [
   ['pinky-finger-phalanx-distal', 'pinky-finger-tip'],
 ];
 
+const jointNames = [
+  'wrist',
+  'thumb-metacarpal', 'thumb-phalanx-proximal', 'thumb-phalanx-distal', 'thumb-tip',
+  'index-finger-metacarpal', 'index-finger-phalanx-proximal', 'index-finger-phalanx-intermediate', 'index-finger-phalanx-distal', 'index-finger-tip',
+  'middle-finger-metacarpal', 'middle-finger-phalanx-proximal', 'middle-finger-phalanx-intermediate', 'middle-finger-phalanx-distal', 'middle-finger-tip',
+  'ring-finger-metacarpal', 'ring-finger-phalanx-proximal', 'ring-finger-phalanx-intermediate', 'ring-finger-phalanx-distal', 'ring-finger-tip',
+  'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal', 'pinky-finger-tip'
+];
+
 class Trail {
   positions: THREE.Vector3[] = [];
   geometry: THREE.BufferGeometry;
   material: THREE.LineBasicMaterial;
   line: THREE.Line;
-  maxPositions = 500;
+  maxPositions = 1000;
   posArray: Float32Array;
 
   constructor(color: number) {
@@ -88,12 +97,22 @@ class Trail {
 export default function XRCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  const [trailLength, setTrailLength] = useState(50);
-  const trailLengthRef = useRef(50);
+  
+  const [sliderValue, setSliderValue] = useState(170); // 10^(1.7) ~= 50
+  const [showAllJoints, setShowAllJoints] = useState(false);
+  
+  const trailLength = Math.floor(Math.pow(10, sliderValue / 100));
+  
+  const trailLengthRef = useRef(trailLength);
+  const showAllJointsRef = useRef(showAllJoints);
 
   useEffect(() => {
     trailLengthRef.current = trailLength;
   }, [trailLength]);
+
+  useEffect(() => {
+    showAllJointsRef.current = showAllJoints;
+  }, [showAllJoints]);
 
   useEffect(() => {
     if (!containerRef.current || !overlayRef.current) return;
@@ -156,18 +175,32 @@ export default function XRCanvas() {
     controller2.add(cube2);
 
     // Trails
-    const trail1 = new Trail(0xff0000); // Red
-    scene.add(trail1.line);
-    const trail2 = new Trail(0x0000ff); // Blue
-    scene.add(trail2.line);
+    const createHandTrails = (color: number) => {
+      const trails: Record<string, Trail> = {};
+      jointNames.forEach(name => {
+        const trail = new Trail(color);
+        trails[name] = trail;
+        scene.add(trail.line);
+      });
+      return trails;
+    };
+
+    const trails1 = createHandTrails(0xff0000); // Red
+    const trails2 = createHandTrails(0x0000ff); // Blue
 
     let c1Active = false;
     let c2Active = false;
 
     controller1.addEventListener('connected', () => { c1Active = true; });
-    controller1.addEventListener('disconnected', () => { c1Active = false; trail1.clear(); });
+    controller1.addEventListener('disconnected', () => { 
+      c1Active = false; 
+      Object.values(trails1).forEach(t => t.clear()); 
+    });
     controller2.addEventListener('connected', () => { c2Active = true; });
-    controller2.addEventListener('disconnected', () => { c2Active = false; trail2.clear(); });
+    controller2.addEventListener('disconnected', () => { 
+      c2Active = false; 
+      Object.values(trails2).forEach(t => t.clear()); 
+    });
 
     function updateStickFigure(hand: any, stickFigure: THREE.LineSegments) {
       if (!hand.joints || Object.keys(hand.joints).length === 0) {
@@ -197,23 +230,31 @@ export default function XRCanvas() {
       stickFigure.geometry.attributes.position.needsUpdate = true;
     }
 
-    function updateTrail(hand: any, controller: THREE.Group, trail: Trail, isActive: boolean, cube: THREE.Mesh) {
+    function updateTrails(hand: any, controller: THREE.Group, trails: Record<string, Trail>, isActive: boolean, cube: THREE.Mesh) {
       if (!isActive) return;
       
       const length = trailLengthRef.current;
+      const showAll = showAllJointsRef.current;
       const targetPos = new THREE.Vector3();
       
       if (hand.joints && Object.keys(hand.joints).length > 0) {
         cube.visible = false;
-        const wrist = hand.joints['wrist'];
-        if (wrist) {
-          wrist.getWorldPosition(targetPos);
-          trail.update(targetPos, length);
+        for (const jointName of jointNames) {
+          const trail = trails[jointName];
+          if ((showAll || jointName === 'wrist') && hand.joints[jointName]) {
+            hand.joints[jointName].getWorldPosition(targetPos);
+            trail.update(targetPos, length);
+          } else {
+            trail.clear();
+          }
         }
       } else {
         cube.visible = true;
         controller.getWorldPosition(targetPos);
-        trail.update(targetPos, length);
+        trails['wrist'].update(targetPos, length);
+        for (const jointName of jointNames) {
+          if (jointName !== 'wrist') trails[jointName].clear();
+        }
       }
     }
 
@@ -221,8 +262,8 @@ export default function XRCanvas() {
       updateStickFigure(hand1, stickFigure1);
       updateStickFigure(hand2, stickFigure2);
       
-      updateTrail(hand1, controller1, trail1, c1Active, cube1);
-      updateTrail(hand2, controller2, trail2, c2Active, cube2);
+      updateTrails(hand1, controller1, trails1, c1Active, cube1);
+      updateTrails(hand2, controller2, trails2, c2Active, cube2);
       
       renderer.render(scene, camera);
     });
@@ -251,21 +292,33 @@ export default function XRCanvas() {
       
       {/* DOM Overlay for AR */}
       <div ref={overlayRef} className="absolute inset-0 pointer-events-none z-10 flex flex-col justify-end p-6">
-        <div className="bg-black/50 p-4 rounded-xl backdrop-blur-md max-w-sm pointer-events-auto">
-          <label className="text-white font-medium mb-2 block">
-            Trail Length: {trailLength}
+        <div className="bg-black/50 p-4 rounded-xl backdrop-blur-md max-w-sm pointer-events-auto flex flex-col gap-4">
+          <div>
+            <label className="text-white font-medium mb-2 block">
+              Trail Length: {trailLength}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="300"
+              value={sliderValue}
+              onChange={(e) => setSliderValue(Number(e.target.value))}
+              className="w-full accent-emerald-500"
+            />
+            <p className="text-white/70 text-sm mt-1">
+              Exponential scale (1 to 1000)
+            </p>
+          </div>
+
+          <label className="flex items-center gap-3 text-white font-medium cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={showAllJoints}
+              onChange={(e) => setShowAllJoints(e.target.checked)}
+              className="w-5 h-5 accent-emerald-500 rounded"
+            />
+            Show trails for all finger joints
           </label>
-          <input
-            type="range"
-            min="10"
-            max="200"
-            value={trailLength}
-            onChange={(e) => setTrailLength(Number(e.target.value))}
-            className="w-full accent-emerald-500"
-          />
-          <p className="text-white/70 text-sm mt-2">
-            Adjust the length of the hand/controller trail.
-          </p>
         </div>
       </div>
     </>
