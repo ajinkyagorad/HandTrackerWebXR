@@ -94,17 +94,92 @@ class Trail {
   }
 }
 
+class HeadsetTrail {
+  maxPositions = 1000;
+  shaftMesh: THREE.InstancedMesh;
+  headMesh: THREE.InstancedMesh;
+  positions: THREE.Vector3[] = [];
+  quaternions: THREE.Quaternion[] = [];
+  dummy = new THREE.Object3D();
+  group = new THREE.Group();
+
+  constructor() {
+    // Thin shaft for the vector
+    const shaftGeo = new THREE.CylinderGeometry(0.0015, 0.0015, 0.04);
+    shaftGeo.rotateX(-Math.PI / 2);
+    shaftGeo.translate(0, 0, -0.02);
+    const shaftMat = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.2 });
+    this.shaftMesh = new THREE.InstancedMesh(shaftGeo, shaftMat, this.maxPositions);
+    this.shaftMesh.count = 0;
+    this.shaftMesh.frustumCulled = false;
+
+    // Small colored head for the vector
+    const headGeo = new THREE.ConeGeometry(0.005, 0.015);
+    headGeo.rotateX(-Math.PI / 2);
+    headGeo.translate(0, 0, -0.0475); // Base at -0.04, tip at -0.055
+    const headMat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.4 });
+    this.headMesh = new THREE.InstancedMesh(headGeo, headMat, this.maxPositions);
+    this.headMesh.count = 0;
+    this.headMesh.frustumCulled = false;
+
+    this.group.add(this.shaftMesh);
+    this.group.add(this.headMesh);
+  }
+
+  update(position: THREE.Vector3, quaternion: THREE.Quaternion, length: number) {
+    this.positions.push(position.clone());
+    this.quaternions.push(quaternion.clone());
+    
+    const actualLength = Math.min(length, this.maxPositions);
+    while (this.positions.length > actualLength) {
+      this.positions.shift();
+      this.quaternions.shift();
+    }
+    
+    // Skip the most recent 15 frames so it doesn't block the immediate view
+    const skipFrames = 15;
+    const renderCount = Math.max(0, this.positions.length - skipFrames);
+    
+    this.shaftMesh.count = renderCount;
+    this.headMesh.count = renderCount;
+
+    for (let i = 0; i < renderCount; i++) {
+      this.dummy.position.copy(this.positions[i]);
+      this.dummy.quaternion.copy(this.quaternions[i]);
+      
+      // Scale down older parts of the trail
+      const scale = 0.3 + 0.7 * (i / renderCount);
+      this.dummy.scale.set(scale, scale, scale);
+      this.dummy.updateMatrix();
+      
+      this.shaftMesh.setMatrixAt(i, this.dummy.matrix);
+      this.headMesh.setMatrixAt(i, this.dummy.matrix);
+    }
+    this.shaftMesh.instanceMatrix.needsUpdate = true;
+    this.headMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  clear() {
+    this.positions = [];
+    this.quaternions = [];
+    this.shaftMesh.count = 0;
+    this.headMesh.count = 0;
+  }
+}
+
 export default function XRCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   
   const [sliderValue, setSliderValue] = useState(170); // 10^(1.7) ~= 50
   const [showAllJoints, setShowAllJoints] = useState(false);
+  const [showHeadset, setShowHeadset] = useState(false);
   
   const trailLength = Math.floor(Math.pow(10, sliderValue / 100));
   
   const trailLengthRef = useRef(trailLength);
   const showAllJointsRef = useRef(showAllJoints);
+  const showHeadsetRef = useRef(showHeadset);
 
   useEffect(() => {
     trailLengthRef.current = trailLength;
@@ -113,6 +188,10 @@ export default function XRCanvas() {
   useEffect(() => {
     showAllJointsRef.current = showAllJoints;
   }, [showAllJoints]);
+
+  useEffect(() => {
+    showHeadsetRef.current = showHeadset;
+  }, [showHeadset]);
 
   useEffect(() => {
     if (!containerRef.current || !overlayRef.current) return;
@@ -187,6 +266,9 @@ export default function XRCanvas() {
 
     const trails1 = createHandTrails(0xff0000); // Red
     const trails2 = createHandTrails(0x0000ff); // Blue
+
+    const headsetTrail = new HeadsetTrail();
+    scene.add(headsetTrail.group);
 
     let c1Active = false;
     let c2Active = false;
@@ -265,6 +347,13 @@ export default function XRCanvas() {
       updateTrails(hand1, controller1, trails1, c1Active, cube1);
       updateTrails(hand2, controller2, trails2, c2Active, cube2);
       
+      if (showHeadsetRef.current) {
+        const xrCamera = renderer.xr.getCamera();
+        headsetTrail.update(xrCamera.position, xrCamera.quaternion, trailLengthRef.current);
+      } else {
+        headsetTrail.clear();
+      }
+      
       renderer.render(scene, camera);
     });
 
@@ -318,6 +407,16 @@ export default function XRCanvas() {
               className="w-5 h-5 accent-emerald-500 rounded"
             />
             Show trails for all finger joints
+          </label>
+
+          <label className="flex items-center gap-3 text-white font-medium cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={showHeadset}
+              onChange={(e) => setShowHeadset(e.target.checked)}
+              className="w-5 h-5 accent-emerald-500 rounded"
+            />
+            Show headset trail & orientation
           </label>
         </div>
       </div>
