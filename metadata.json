@@ -1,0 +1,5 @@
+{
+  "name": "WebXR Hand Tracker",
+  "description": "Meta Quest 3 WebXR app for hand and controller tracking with trails and stick figure hands in AR passthrough.",
+  "requestFramePermissions": []
+}
